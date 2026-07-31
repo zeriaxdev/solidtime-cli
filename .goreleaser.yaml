@@ -18,9 +18,12 @@ builds:
 
 universal_binaries:
   # One macOS binary for both Intel and Apple silicon, which is what the
-  # Homebrew formula installs.
+  # Homebrew cask installs.
   - id: solidtime
     replace: true
+    # Defaults to the project name, which would ship a binary called
+    # solidtime-cli and break the cask's symlink.
+    name_template: solidtime
 
 archives:
   - formats: [tar.gz]
