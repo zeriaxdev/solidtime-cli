@@ -228,7 +228,9 @@ func resolveOrg(client *Client, configured string) (string, error) {
 		return "", err
 	}
 	if len(memberships) == 1 {
-		return memberships[0].Organization.ID, nil
+		orgID := memberships[0].Organization.ID
+		rememberOrg(orgID)
+		return orgID, nil
 	}
 	return "", fmt.Errorf("set default_org in your config (or SOLIDTIME_ORGANIZATION_ID); run 'solidtime orgs' to list them")
 }

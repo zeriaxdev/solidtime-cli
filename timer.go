@@ -17,6 +17,41 @@ type session struct {
 	client *Client
 	org    string
 	cfg    Config
+
+	// Cached for the life of the process. A single command can otherwise fetch
+	// the project list three or four times over.
+	cachedProjects []Project
+	cachedMemberID string
+}
+
+// allProjects fetches the project list at most once per process.
+func (s *session) allProjects() ([]Project, error) {
+	if s.cachedProjects != nil {
+		return s.cachedProjects, nil
+	}
+	projects, err := s.client.projects(s.org)
+	if err != nil {
+		return nil, err
+	}
+	s.cachedProjects = projects
+	return projects, nil
+}
+
+// myMemberID resolves your member id, caching it for the process.
+func (s *session) myMemberID() (string, error) {
+	if s.cachedMemberID != "" {
+		return s.cachedMemberID, nil
+	}
+	user, err := s.client.me()
+	if err != nil {
+		return "", err
+	}
+	memberID, err := s.client.memberID(s.org, user.ID)
+	if err != nil {
+		return "", err
+	}
+	s.cachedMemberID = memberID
+	return memberID, nil
 }
 
 func newSession() (*session, error) {
@@ -38,7 +73,7 @@ func newSession() (*session, error) {
 // findProject matches a project by case-insensitive substring. An ambiguous
 // match is an error rather than a coin flip, since it decides what gets billed.
 func (s *session) findProject(needle string) (Project, error) {
-	projects, err := s.client.projects(s.org)
+	projects, err := s.allProjects()
 	if err != nil {
 		return Project{}, err
 	}
@@ -93,7 +128,7 @@ func (s *session) describe(entry TimeEntry) string {
 		return *entry.Description
 	}
 	if entry.ProjectID != nil {
-		if projects, err := s.client.projects(s.org); err == nil {
+		if projects, err := s.allProjects(); err == nil {
 			for _, project := range projects {
 				if project.ID == *entry.ProjectID {
 					return project.Name
@@ -133,11 +168,7 @@ func newStartCmd() *cobra.Command {
 				}
 			}
 
-			user, err := s.client.me()
-			if err != nil {
-				return err
-			}
-			memberID, err := s.client.memberID(s.org, user.ID)
+			memberID, err := s.myMemberID()
 			if err != nil {
 				return err
 			}
@@ -325,7 +356,7 @@ func writeStatusJSON(w io.Writer, s *session, running *TimeEntry) error {
 		}
 		if running.ProjectID != nil {
 			status.ProjectID = *running.ProjectID
-			if projects, err := s.client.projects(s.org); err == nil {
+			if projects, err := s.allProjects(); err == nil {
 				for _, project := range projects {
 					if project.ID == *running.ProjectID {
 						status.Project, status.Color = project.Name, project.Color

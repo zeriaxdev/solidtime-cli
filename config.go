@@ -116,6 +116,31 @@ default_org = ""
 # minutes = 15
 `
 
+// rememberOrg writes a resolved organization id back into the config, so later
+// runs skip the membership lookup. Edits the one line rather than re-encoding
+// the file, which would discard the user's comments and formatting.
+func rememberOrg(orgID string) {
+	path, err := configPath()
+	if err != nil {
+		return
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	lines := strings.Split(string(contents), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == `default_org = ""` || trimmed == "default_org = ''" {
+			lines[i] = `default_org = "` + orgID + `"`
+			// Best effort: a failed write just means we look it up again.
+			_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
+			return
+		}
+	}
+}
+
 func writeDefaultConfig() (string, error) {
 	path, err := configPath()
 	if err != nil {
