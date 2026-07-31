@@ -1,0 +1,84 @@
+version: 2
+
+project_name: solidtime-cli
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: solidtime
+    binary: solidtime
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+universal_binaries:
+  # One macOS binary for both Intel and Apple silicon, which is what the
+  # Homebrew formula installs.
+  - id: solidtime
+    replace: true
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Other
+      order: 2
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+
+homebrew_casks:
+  - name: solidtime
+    binaries: [solidtime]
+    repository:
+      owner: zeriaxdev
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/zeriaxdev/solidtime-cli
+    description: Report tracked hours and billable totals from solidtime
+    # Cobra can emit its own completions, so the cask installs them for free.
+    generate_completions_from_executable:
+      executable: solidtime
+      args: [completion]
+      shell_parameter_format: cobra
+    hooks:
+      post:
+        install: |
+          # The binary is not notarized, so Gatekeeper would quarantine it.
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/solidtime"]
+          end
+
+release:
+  footer: |
+    ## Install
+
+    ```sh
+    brew install zeriaxdev/tap/solidtime
+    ```
