@@ -487,3 +487,31 @@ func TestClientSurfacesAPIErrors(t *testing.T) {
 		t.Fatalf("error should quote the API message, got %v", err)
 	}
 }
+
+func TestActiveEntryTreats404AsIdle(t *testing.T) {
+	// Solidtime answers 404 when no timer runs. Propagating that as an error
+	// used to break status, stop and toggle whenever nothing was tracking.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"No active time entry"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	entry, err := newClient(server.URL, "t").activeEntry()
+	if err != nil {
+		t.Fatalf("404 should mean idle, got error: %v", err)
+	}
+	if entry != nil {
+		t.Errorf("expected nil entry, got %+v", entry)
+	}
+}
+
+func TestActiveEntryPropagatesRealErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"Unauthenticated"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	if _, err := newClient(server.URL, "t").activeEntry(); err == nil {
+		t.Fatal("a 401 must not be swallowed as idle")
+	}
+}

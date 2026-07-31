@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,7 +52,7 @@ func (c *Client) get(path string, params url.Values, out any) error {
 		return err
 	}
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s on %s: %s", res.Status, endpoint, apiError(body))
+		return httpError{status: res.StatusCode, endpoint: endpoint, message: apiError(body)}
 	}
 
 	envelope := struct {
@@ -104,6 +105,24 @@ func (c *Client) send(method, path string, body, out any) error {
 		return fmt.Errorf("decoding %s: %w", endpoint, err)
 	}
 	return json.Unmarshal(envelope.Data, out)
+}
+
+// httpError carries the status code so callers can treat specific failures as
+// data rather than errors.
+type httpError struct {
+	status   int
+	endpoint string
+	message  string
+}
+
+func (e httpError) Error() string {
+	return fmt.Sprintf("%d on %s: %s", e.status, e.endpoint, e.message)
+}
+
+// isNotFound reports whether an error was a 404 from the API.
+func isNotFound(err error) bool {
+	var apiErr httpError
+	return errors.As(err, &apiErr) && apiErr.status == http.StatusNotFound
 }
 
 // apiError pulls Laravel's "message" out of an error body, falling back to the raw body.
@@ -170,9 +189,15 @@ func (c *Client) memberID(orgID, userID string) (string, error) {
 }
 
 // activeEntry returns the running timer, or nil when nothing is running.
+//
+// Solidtime answers 404 rather than a null payload when no timer is running, so
+// that case has to be read as "idle" instead of propagated as a failure.
 func (c *Client) activeEntry() (*TimeEntry, error) {
 	var out *TimeEntry
 	if err := c.get("/v1/users/me/time-entries/active", nil, &out); err != nil {
+		if isNotFound(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return out, nil
