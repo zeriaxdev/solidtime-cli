@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -73,6 +74,7 @@ func newOrgsCmd() *cobra.Command {
 func newProjectsCmd() *cobra.Command {
 	var showArchived bool
 	var noColor bool
+	var asJSON bool
 
 	cmd := &cobra.Command{
 		Use:   "projects",
@@ -97,13 +99,26 @@ func newProjectsCmd() *cobra.Command {
 				return err
 			}
 
+			if !showArchived {
+				active := projects[:0]
+				for _, project := range projects {
+					if !project.IsArchived {
+						active = append(active, project)
+					}
+				}
+				projects = active
+			}
+
+			if asJSON {
+				encoder := json.NewEncoder(os.Stdout)
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(projects)
+			}
+
 			color := useColor(noColor)
 			out := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(out, "NAME\tBILLABLE\tRATE\tID")
 			for _, project := range projects {
-				if project.IsArchived && !showArchived {
-					continue
-				}
 				rate := "-"
 				if project.Rate != nil {
 					rate = fmt.Sprintf("%.2f", *project.Rate/100)
@@ -121,6 +136,7 @@ func newProjectsCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&showArchived, "archived", false, "include archived projects")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "disable colored output")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
 	return cmd
 }
 

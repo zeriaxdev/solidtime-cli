@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -248,6 +251,7 @@ func newToggleCmd() *cobra.Command {
 
 func newStatusCmd() *cobra.Command {
 	var short bool
+	var asJSON bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -261,6 +265,10 @@ func newStatusCmd() *cobra.Command {
 			running, err := s.client.activeEntry()
 			if err != nil {
 				return err
+			}
+
+			if asJSON {
+				return writeStatusJSON(os.Stdout, s, running)
 			}
 
 			if running == nil {
@@ -284,5 +292,50 @@ func newStatusCmd() *cobra.Command {
 
 	// A status line polls this constantly; --short keeps it to one terse line.
 	cmd.Flags().BoolVar(&short, "short", false, "one line, empty when nothing is running")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable status, for scripts and menu bar apps")
 	return cmd
+}
+
+// StatusJSON is the stable shape consumers parse. Start is included so a caller
+// can tick its own clock instead of polling this command every second.
+type StatusJSON struct {
+	Running     bool   `json:"running"`
+	ID          string `json:"id,omitempty"`
+	Description string `json:"description,omitempty"`
+	Project     string `json:"project,omitempty"`
+	ProjectID   string `json:"project_id,omitempty"`
+	Color       string `json:"color,omitempty"`
+	Billable    bool   `json:"billable,omitempty"`
+	Start       string `json:"start,omitempty"`
+	Seconds     int    `json:"seconds,omitempty"`
+}
+
+func writeStatusJSON(w io.Writer, s *session, running *TimeEntry) error {
+	status := StatusJSON{}
+	if running != nil {
+		status = StatusJSON{
+			Running:  true,
+			ID:       running.ID,
+			Billable: running.Billable,
+			Start:    running.Start,
+			Seconds:  int(elapsed(*running, time.Now()).Seconds()),
+		}
+		if running.Description != nil {
+			status.Description = *running.Description
+		}
+		if running.ProjectID != nil {
+			status.ProjectID = *running.ProjectID
+			if projects, err := s.client.projects(s.org); err == nil {
+				for _, project := range projects {
+					if project.ID == *running.ProjectID {
+						status.Project, status.Color = project.Name, project.Color
+					}
+				}
+			}
+		}
+	}
+
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(status)
 }
