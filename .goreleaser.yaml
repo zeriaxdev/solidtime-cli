@@ -65,11 +65,9 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/zeriaxdev/solidtime-cli
     description: Report tracked hours and billable totals from solidtime
-    # Cobra can emit its own completions, so the cask installs them for free.
-    generate_completions_from_executable:
-      executable: solidtime
-      args: [completion]
-      shell_parameter_format: cobra
+    # No generate_completions_from_executable: Homebrew runs the binary inside a
+    # sandbox that kills the unsigned build. Users run `solidtime completion zsh`
+    # themselves, which the README documents.
     hooks:
       post:
         install: |
