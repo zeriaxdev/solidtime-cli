@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 )
 
@@ -105,6 +106,71 @@ func (c *Client) send(method, path string, body, out any) error {
 		return fmt.Errorf("decoding %s: %w", endpoint, err)
 	}
 	return json.Unmarshal(envelope.Data, out)
+}
+
+// aggregateExport asks solidtime to render a report itself and returns the
+// temporary download URL it replies with. Unlike every other endpoint the
+// payload is not wrapped in a "data" envelope.
+func (c *Client) aggregateExport(orgID string, params url.Values) (string, error) {
+	endpoint := c.baseURL + "/v1/organizations/" + orgID + "/time-entries/aggregate/export"
+	if len(params) > 0 {
+		endpoint += "?" + params.Encode()
+	}
+
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	res, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+	if res.StatusCode != http.StatusOK {
+		return "", httpError{status: res.StatusCode, endpoint: endpoint, message: apiError(body)}
+	}
+
+	parsed := struct {
+		DownloadURL string `json:"download_url"`
+	}{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("decoding export response: %w", err)
+	}
+	if parsed.DownloadURL == "" {
+		return "", fmt.Errorf("solidtime returned no download URL")
+	}
+	return parsed.DownloadURL, nil
+}
+
+// download saves a URL to disk. The export URL is pre-signed and short-lived,
+// so it carries no Authorization header of its own.
+func (c *Client) download(rawURL, path string) error {
+	res, err := c.http.Get(rawURL)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("downloading export: %s", res.Status)
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = io.Copy(file, res.Body)
+	return err
 }
 
 // httpError carries the status code so callers can treat specific failures as

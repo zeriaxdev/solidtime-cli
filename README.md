@@ -99,22 +99,37 @@ solidtime completion zsh                    # shell completion
 ### Invoices
 
 ```sh
-solidtime invoice                                  # guided picker
-solidtime invoice --period last-month --format html -o july.html
-solidtime invoice --from 2026-07-01 --to 2026-07-31 --client <id> --format csv
+solidtime invoice                                  # guided picker, writes invoice-2026-07.xlsx
+solidtime invoice --period last-month --format pdf
+solidtime invoice --from 2026-07-01 --to 2026-07-31 --client <id> --format html
 ```
 
 Run bare in a terminal and it walks you through period, grouping and client with an arrow-key
 picker. Pass any of `--period`, `--from`/`--to`, `--client` or `--project` and it skips the picker
 entirely, so it scripts cleanly and works in CI.
 
-**Solidtime has no invoicing API.** The `invoices:*` permissions exist in its source but no routes
-back them, so this builds the document locally from your time entries and the rates in
-[Money](#money). It is a rendering of your tracked time, not a record stored in solidtime.
+A file is always written — `invoice-<number>.<ext>` in the current directory unless you pass
+`--output`. Use `-o -` to send it to stdout instead.
 
-Formats are `markdown` (default), `csv`, and `html` — the HTML is print-styled, so open it in a
-browser and print to PDF. Line items come from `--group` (`project`, `client`, `task` or `day`) and
-only billable time is included unless you pass `--billable=false`.
+| `--format` | Rendered by | Notes |
+| --- | --- | --- |
+| `xlsx` | solidtime | The default. The same spreadsheet the web app exports. |
+| `ods` | solidtime | For LibreOffice. |
+| `pdf` | solidtime | **Paid plans only** — free plans get "Feature is not available in free plan". |
+| `html` | locally | Print-styled: open in a browser and print to PDF. The free-plan route to a PDF. |
+| `markdown` | locally | For pasting into an email or an issue. |
+| `csv` | locally | Plain rows, no chart. |
+
+`pdf`, `xlsx` and `ods` go through solidtime's own `/time-entries/aggregate/export` endpoint, so the
+file is byte-for-byte what the web app produces, chart included. The local formats are built from
+the aggregate data and the rates in [Money](#money).
+
+**Solidtime has no invoicing API** — the `invoices:*` permissions exist in its source but no routes
+back them. What this command produces is a time report shaped like an invoice, not a record stored
+in solidtime.
+
+Line items come from `--group` (`project`, `client`, `task` or `day`), and only billable time is
+included unless you pass `--billable=false`.
 
 ### The timer
 

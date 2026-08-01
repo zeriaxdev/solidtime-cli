@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -64,8 +65,9 @@ func newInvoiceCmd() *cobra.Command {
 		Long: "Build an invoice from tracked time.\n\n" +
 			"Run without flags in a terminal for a guided picker. Pass any of --period,\n" +
 			"--from/--to or --client to skip it and run non-interactively.\n\n" +
-			"Solidtime has no invoicing API, so the document is generated locally from\n" +
-			"your time entries and the rates in your config.",
+			"pdf, xlsx and ods are rendered by solidtime itself and downloaded; pdf needs\n" +
+			"a paid plan. markdown, html and csv are rendered locally from your time\n" +
+			"entries and the rates in your config, so they work on any plan.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInvoice(cmd, flags)
@@ -84,8 +86,10 @@ func newInvoiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&flags.number, "number", "", "invoice number (default: YYYY-MM based on the period)")
 	cmd.Flags().IntVar(&flags.due, "due", 14, "days until payment is due")
 	cmd.Flags().StringVar(&flags.notes, "notes", "", "a line of notes for the footer")
-	cmd.Flags().StringVar(&flags.format, "format", "markdown", "output: markdown, html, csv")
-	cmd.Flags().StringVarP(&flags.output, "output", "o", "", "write to a file instead of stdout")
+	cmd.Flags().StringVar(&flags.format, "format", "xlsx",
+		"pdf, xlsx, ods (rendered by solidtime) or markdown, html, csv (rendered locally)")
+	cmd.Flags().StringVarP(&flags.output, "output", "o", "",
+		`file to write (default "invoice-<number>.<ext>"); "-" for stdout`)
 
 	return cmd
 }
@@ -207,6 +211,17 @@ func runInvoice(cmd *cobra.Command, flags invoiceFlags) error {
 		params.Add("client_ids[]", flags.client)
 	}
 
+	number := flags.number
+	if number == "" {
+		number = start.Format("2006-01")
+	}
+
+	// pdf, xlsx and ods are rendered by solidtime itself, so the file is the
+	// same one the web app produces rather than an approximation of it.
+	if extension, native := nativeExportFormats[flags.format]; native {
+		return runNativeExport(s, params, flags, number, extension)
+	}
+
 	aggregate, err := s.client.aggregate(s.org, params)
 	if err != nil {
 		return err
@@ -222,7 +237,7 @@ func runInvoice(cmd *cobra.Command, flags invoiceFlags) error {
 	}
 
 	invoice := Invoice{
-		Number:   flags.number,
+		Number:   number,
 		Issued:   time.Now(),
 		Due:      time.Now().AddDate(0, 0, flags.due),
 		From:     start,
@@ -231,24 +246,81 @@ func runInvoice(cmd *cobra.Command, flags invoiceFlags) error {
 		Lines:    lines,
 		Notes:    flags.notes,
 	}
-	if invoice.Number == "" {
-		invoice.Number = start.Format("2006-01")
-	}
 
 	rendered, err := renderInvoice(invoice, flags.format)
 	if err != nil {
 		return err
 	}
 
-	if flags.output == "" {
+	if flags.output == "-" {
 		fmt.Print(rendered)
 		return nil
 	}
-	if err := os.WriteFile(flags.output, []byte(rendered), 0o644); err != nil {
+
+	path := flags.output
+	if path == "" {
+		path = "invoice-" + number + "." + localExtension(flags.format)
+	}
+	if err := os.WriteFile(path, []byte(rendered), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Wrote %s (%.2f h, %s%.2f)\n",
-		flags.output, invoice.totalHours(), invoice.Currency, invoice.totalAmount())
+	fmt.Fprintf(os.Stderr, "Wrote %s  (%.2f h, %s%.2f)\n",
+		path, invoice.totalHours(), invoice.Currency, invoice.totalAmount())
+	return nil
+}
+
+// nativeExportFormats are the ones solidtime renders server-side, mapped to
+// their file extensions.
+var nativeExportFormats = map[string]string{
+	"pdf":  "pdf",
+	"xlsx": "xlsx",
+	"ods":  "ods",
+}
+
+func localExtension(format string) string {
+	switch format {
+	case "markdown", "md":
+		return "md"
+	default:
+		return format
+	}
+}
+
+// runNativeExport has solidtime render the report and downloads the result.
+func runNativeExport(s *session, params url.Values, flags invoiceFlags, number, extension string) error {
+	params.Set("format", flags.format)
+
+	// The export endpoint requires both grouping levels and a chart interval,
+	// unlike the plain aggregate endpoint where only `group` is mandatory.
+	if params.Get("sub_group") == "" {
+		subGroup := "description"
+		if flags.group == "description" {
+			subGroup = "task"
+		}
+		params.Set("sub_group", subGroup)
+	}
+	params.Set("history_group", historyGroupFor(flags))
+
+	downloadURL, err := s.client.aggregateExport(s.org, params)
+	if err != nil {
+		// PDF needs a paid plan, and a self-hosted instance additionally needs a
+		// Gotenberg renderer configured. Both surface here.
+		if flags.format == "pdf" {
+			return fmt.Errorf("%w\n\nSolidtime renders PDFs only on a paid plan. "+
+				"Use --format xlsx, or --format html and print to PDF from a browser", err)
+		}
+		return err
+	}
+
+	path := flags.output
+	if path == "" || path == "-" {
+		path = "invoice-" + number + "." + extension
+	}
+	if err := s.client.download(downloadURL, path); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Wrote %s\n", path)
 	return nil
 }
 
@@ -381,4 +453,29 @@ func renderInvoiceHTML(inv Invoice) string {
 func escapeHTML(text string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return replacer.Replace(text)
+}
+
+// historyGroupFor picks the bucket size for the chart solidtime draws into its
+// exports: days over a short range, weeks or months as the span grows.
+func historyGroupFor(flags invoiceFlags) string {
+	switch flags.period {
+	case "this-week", "last-week":
+		return "day"
+	case "this-month", "last-month":
+		return "day"
+	}
+
+	from, errFrom := time.Parse(time.DateOnly, flags.from)
+	to, errTo := time.Parse(time.DateOnly, flags.to)
+	if errFrom != nil || errTo != nil {
+		return "day"
+	}
+	switch days := to.Sub(from).Hours() / 24; {
+	case days > 365:
+		return "month"
+	case days > 62:
+		return "week"
+	default:
+		return "day"
+	}
 }

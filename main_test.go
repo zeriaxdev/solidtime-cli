@@ -602,3 +602,37 @@ func TestResolveInvoiceRangeRequiresFlagsWhenScripted(t *testing.T) {
 		t.Error("an unknown period should error")
 	}
 }
+
+func TestHistoryGroupFor(t *testing.T) {
+	// The export endpoint rejects a missing history_group, and a chart bucketed
+	// by day over a year would be useless anyway.
+	tests := []struct {
+		name  string
+		flags invoiceFlags
+		want  string
+	}{
+		{name: "month preset", flags: invoiceFlags{period: "last-month"}, want: "day"},
+		{name: "week preset", flags: invoiceFlags{period: "this-week"}, want: "day"},
+		{name: "short range", flags: invoiceFlags{from: "2026-07-01", to: "2026-07-31"}, want: "day"},
+		{name: "quarter", flags: invoiceFlags{from: "2026-01-01", to: "2026-06-30"}, want: "week"},
+		{name: "over a year", flags: invoiceFlags{from: "2024-01-01", to: "2026-01-01"}, want: "month"},
+		{name: "unparseable dates fall back", flags: invoiceFlags{from: "nope"}, want: "day"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := historyGroupFor(tc.flags); got != tc.want {
+				t.Errorf("historyGroupFor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLocalExtension(t *testing.T) {
+	if got := localExtension("markdown"); got != "md" {
+		t.Errorf("markdown extension = %q, want md", got)
+	}
+	if got := localExtension("csv"); got != "csv" {
+		t.Errorf("csv extension = %q", got)
+	}
+}
