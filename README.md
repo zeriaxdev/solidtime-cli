@@ -24,6 +24,7 @@ $ solidtime --last-month
 - [Background](#background)
 - [Install](#install)
 - [Usage](#usage)
+  - [Invoices](#invoices)
   - [The timer](#the-timer)
   - [Selecting a period](#selecting-a-period)
   - [Grouping](#grouping)
@@ -94,6 +95,26 @@ solidtime projects                          # names, colors, billable rates
 solidtime orgs                              # organization ids
 solidtime completion zsh                    # shell completion
 ```
+
+### Invoices
+
+```sh
+solidtime invoice                                  # guided picker
+solidtime invoice --period last-month --format html -o july.html
+solidtime invoice --from 2026-07-01 --to 2026-07-31 --client <id> --format csv
+```
+
+Run bare in a terminal and it walks you through period, grouping and client with an arrow-key
+picker. Pass any of `--period`, `--from`/`--to`, `--client` or `--project` and it skips the picker
+entirely, so it scripts cleanly and works in CI.
+
+**Solidtime has no invoicing API.** The `invoices:*` permissions exist in its source but no routes
+back them, so this builds the document locally from your time entries and the rates in
+[Money](#money). It is a rendering of your tracked time, not a record stored in solidtime.
+
+Formats are `markdown` (default), `csv`, and `html` — the HTML is print-styled, so open it in a
+browser and print to PDF. Line items come from `--group` (`project`, `client`, `task` or `day`) and
+only billable time is included unless you pass `--billable=false`.
 
 ### The timer
 

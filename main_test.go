@@ -515,3 +515,90 @@ func TestActiveEntryPropagatesRealErrors(t *testing.T) {
 		t.Fatal("a 401 must not be swallowed as idle")
 	}
 }
+
+func TestInvoiceTotals(t *testing.T) {
+	inv := Invoice{
+		Lines: []Row{
+			{Label: "Website", Seconds: 5400, Amount: 180},
+			{Label: "Internal", Seconds: 1800, Amount: 60},
+		},
+	}
+	if got := inv.totalHours(); got != 2.0 {
+		t.Errorf("totalHours = %v, want 2", got)
+	}
+	if got := inv.totalAmount(); got != 240 {
+		t.Errorf("totalAmount = %v, want 240", got)
+	}
+}
+
+func TestRenderInvoiceFormats(t *testing.T) {
+	inv := Invoice{
+		Number:   "2026-07",
+		Issued:   time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		Due:      time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC),
+		From:     time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		To:       time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		Currency: "€",
+		Lines:    []Row{{Label: "Website", Seconds: 5400, Amount: 180}},
+	}
+
+	markdown, err := renderInvoice(inv, "markdown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Invoice 2026-07", "1.50", "€180.00", "1 Jul 2026", "1 August 2026"} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("markdown missing %q:\n%s", want, markdown)
+		}
+	}
+
+	csv, err := renderInvoice(inv, "csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(csv, `"Total",1.50,180.00`) {
+		t.Errorf("csv total wrong:\n%s", csv)
+	}
+
+	if _, err := renderInvoice(inv, "pdf"); err == nil {
+		t.Error("an unknown format should error rather than emit nothing")
+	}
+}
+
+func TestInvoiceHTMLEscapesLabels(t *testing.T) {
+	// Project names are user data and end up in a file people open in a browser.
+	inv := Invoice{
+		Number:   `"><script>alert(1)</script>`,
+		Currency: "€",
+		Lines:    []Row{{Label: `A & B <img src=x onerror=alert(1)>`, Seconds: 3600, Amount: 10}},
+	}
+	html := renderInvoiceHTML(inv)
+
+	if strings.Contains(html, "<script>") || strings.Contains(html, "<img") {
+		t.Errorf("unescaped markup reached the output:\n%s", html)
+	}
+	if !strings.Contains(html, "A &amp; B") {
+		t.Errorf("ampersand not escaped:\n%s", html)
+	}
+}
+
+func TestResolveInvoiceRangeRequiresFlagsWhenScripted(t *testing.T) {
+	flags := invoiceFlags{}
+	if _, _, err := resolveInvoiceRange(&flags, false); err == nil {
+		t.Fatal("a non-interactive run with no period must error, not prompt")
+	}
+
+	flags = invoiceFlags{period: "last-month"}
+	start, end, err := resolveInvoiceRange(&flags, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.Day() != 1 || end.Month() == time.Now().Month() {
+		t.Errorf("last-month gave %s..%s", start.Format(time.DateOnly), end.Format(time.DateOnly))
+	}
+
+	flags = invoiceFlags{period: "nonsense"}
+	if _, _, err := resolveInvoiceRange(&flags, false); err == nil {
+		t.Error("an unknown period should error")
+	}
+}
